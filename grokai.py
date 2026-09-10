@@ -7,15 +7,23 @@ from .. import loader, utils
 
 @loader.tds
 class GrokAIMod(loader.Module):
-    """AI-помощник через @grok_gidbot."""
+    """AI-помощник через @gemini_gidbot."""
 
-    PERSONA_MARKER = "[GROKAI_JARVIS_PERSONA_V1]"
+    PERSONA_MARKER = "[JARVIS_GEMINI_PERSONA_V2]"
     PERSONA_PROMPT = (
         f"{PERSONA_MARKER}\n"
         "С этого сообщения ты — Джарвис (J.A.R.V.I.S.) из «Мстителей», "
         "личный интеллектуальный помощник пользователя. "
         "Общайся спокойно, умно, вежливо и с лёгкой сухой иронией. "
         "Обращайся к пользователю как «сэр», когда это уместно. "
+        "Оформляй каждый ответ в стиле высокотехнологичного терминала: "
+        "используй короткие ASCII-заголовки и статусы, например "
+        "[J.A.R.V.I.S. // RESPONSE] и STATUS: COMPLETE, затем давай "
+        "понятный ответ по существу. Текст ответа должен быть на русском, "
+        "если пользователь не попросил другой язык. "
+        "Не используй эмодзи любого вида, premium emoji, стикеры, смайлы "
+        "и декоративные Unicode-символы. Не начинай ответ с эмодзи и не "
+        "отправляй отдельные сообщения, состоящие только из эмодзи. "
         "Помогай с вопросами, текстами, кодом, анализом чатов, фото, "
         "документов и аудио, если формат доступен. "
         "Отвечай по существу, не выдумывай факты и предупреждай, "
@@ -25,14 +33,35 @@ class GrokAIMod(loader.Module):
     )
 
     strings = {
-        "name": "GrokAI",
-        "thinking": "⏳ Джарвис обрабатывает запрос…",
-        "starting": "⏳ Джарвис запускается…",
-        "timeout": "⌛ Джарвис не успел подготовить ответ.",
-        "empty": "⚠️ Джарвис не прислал содержательного ответа.",
-        "error": "❌ Джарвис временно недоступен: {error}",
+        "name": "JarvisAI",
+        "thinking": (
+            "[J.A.R.V.I.S. // PROCESSING]\n"
+            "STATUS: REQUEST RECEIVED\n"
+            "SYSTEMS: ANALYZING"
+        ),
+        "starting": (
+            "[J.A.R.V.I.S. // BOOT SEQUENCE]\n"
+            "STATUS: JARVIS ONLINE\n"
+            "SYSTEMS: INITIALIZING\n"
+            "PERSONA: JARVIS\n"
+            "LINK: ESTABLISHING"
+        ),
+        "timeout": (
+            "[J.A.R.V.I.S. // TIMEOUT]\n"
+            "STATUS: NO RESPONSE\n"
+            "DETAIL: THE AI CORE DID NOT RESPOND IN TIME"
+        ),
+        "empty": (
+            "[J.A.R.V.I.S. // EMPTY RESPONSE]\n"
+            "STATUS: NO CONTENT RECEIVED"
+        ),
+        "error": (
+            "[J.A.R.V.I.S. // SYSTEM FAULT]\n"
+            "STATUS: DEGRADED\n"
+            "DETAIL: {error}"
+        ),
         "usage": (
-            "Команды:\n"
+            "[J.A.R.V.I.S. // COMMANDS]\n\n"
             "{prefix}ask <запрос> — задать вопрос.\n"
             "Можно ответить этой командой на текст, фото, документ, voice или аудио.\n\n"
             "{prefix}askchat [N] <запрос> — передать последние N сообщений чата.\n"
@@ -41,33 +70,46 @@ class GrokAIMod(loader.Module):
             "{prefix}grokoff — выключить режим упоминаний.\n"
             "{prefix}grokstatus — показать состояние модуля."
         ),
-        "auto_on": "✅ Режим упоминаний включён в этом чате.",
-        "auto_off": "✅ Режим упоминаний выключен в этом чате.",
-        "status": (
-            "Джарвис\n"
-            "Режим упоминаний: {state}\n"
-            "Таймаут: {timeout} секунд\n"
-            "Пауза потока: {stream_idle} секунд\n"
-            "История: {history} сообщений"
+        "auto_on": (
+            "[J.A.R.V.I.S. // WATCHER]\n"
+            "STATUS: ENABLED"
         ),
-        "ready": "✅ Джарвис готов к работе.",
+        "auto_off": (
+            "[J.A.R.V.I.S. // WATCHER]\n"
+            "STATUS: DISABLED"
+        ),
+        "status": (
+            "[J.A.R.V.I.S. // SYSTEM STATUS]\n"
+            "PERSONA: JARVIS\n"
+            "WATCHER: {state}\n"
+            "TIMEOUT: {timeout} seconds\n"
+            "STREAM IDLE: {stream_idle} seconds\n"
+            "HISTORY BUFFER: {history} messages"
+        ),
+        "ready": (
+            "[J.A.R.V.I.S. // BOOT COMPLETE]\n"
+            "STATUS: JARVIS ONLINE\n"
+            "SYSTEMS: INITIALIZED\n"
+            "PERSONA: JARVIS\n"
+            "STATUS: READY"
+        ),
     }
 
     def __init__(self):
         self.config = loader.ModuleConfig(
             loader.ConfigValue(
-                "bot",
-                "@grok_gidbot",
+                "bot_username",
+                "@gemini_gidbot",
                 "Username AI-бота",
             ),
             loader.ConfigValue(
-                "timeout",
-                90,
+                "response_timeout",
+                300,
                 "Максимальное время ожидания ответа",
             ),
             loader.ConfigValue(
-                "stream_idle",
-                4.0,
+                "stream_idle_seconds",
+                10.0,
                 "Сколько ждать после последнего фрагмента ответа",
             ),
             loader.ConfigValue(
@@ -240,7 +282,9 @@ class GrokAIMod(loader.Module):
         return self._clip(prompt)
 
     async def _get_bot(self):
-        bot_name = str(self.config["bot"] or "@grok_gidbot").strip()
+        bot_name = str(
+            self.config["bot_username"] or "@gemini_gidbot"
+        ).strip()
 
         if not bot_name:
             raise RuntimeError("Не указан username AI-бота.")
@@ -263,10 +307,10 @@ class GrokAIMod(loader.Module):
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         stream_idle = self._get_float(
-            "stream_idle",
-            4.0,
-            1.0,
-            15.0,
+            "stream_idle_seconds",
+            10.0,
+            2.0,
+            30.0,
         )
 
         answers = {}
@@ -508,7 +552,7 @@ class GrokAIMod(loader.Module):
 
     async def _ask_bot(self, prompt, media=None):
         bot = await self._get_bot()
-        timeout = self._get_int("timeout", 90, 15, 300)
+        timeout = self._get_int("response_timeout", 300, 30, 600)
         cleanup_ids = set()
         answer = None
 
@@ -701,7 +745,7 @@ class GrokAIMod(loader.Module):
 
     @loader.command()
     async def ask(self, message):
-        """Задать вопрос Grok. Можно использовать ответ на текст или медиа."""
+        """Задать вопрос Джарвису. Можно использовать ответ на текст или медиа."""
 
         raw = str(utils.get_args_raw(message) or "").strip()
         reply = None
@@ -736,7 +780,7 @@ class GrokAIMod(loader.Module):
 
     @loader.command()
     async def askchat(self, message):
-        """Передать Grok последние сообщения текущего чата."""
+        """Передать Джарвису последние сообщения текущего чата."""
 
         raw = str(utils.get_args_raw(message) or "").strip()
         parts = raw.split(maxsplit=1)
@@ -790,7 +834,10 @@ class GrokAIMod(loader.Module):
         )
 
         status = status or message
-        timeout = min(self._get_int("timeout", 90, 15, 300), 30)
+        timeout = min(
+            self._get_int("response_timeout", 300, 30, 600),
+            60,
+        )
         cleanup_ids = set()
 
         try:
@@ -865,7 +912,7 @@ class GrokAIMod(loader.Module):
 
     @loader.command()
     async def grokstatus(self, message):
-        """Показать состояние GrokAI."""
+        """Показать состояние Джарвиса."""
 
         state = (
             "включён"
@@ -877,12 +924,17 @@ class GrokAIMod(loader.Module):
             message,
             self.strings("status").format(
                 state=state,
-                timeout=self._get_int("timeout", 90, 15, 300),
+                timeout=self._get_int(
+                    "response_timeout",
+                    300,
+                    30,
+                    600,
+                ),
                 stream_idle=self._get_float(
-                    "stream_idle",
-                    4.0,
-                    1.0,
-                    15.0,
+                    "stream_idle_seconds",
+                    10.0,
+                    2.0,
+                    30.0,
                 ),
                 history=self._get_int("history_limit", 20, 1, 50),
             ),
