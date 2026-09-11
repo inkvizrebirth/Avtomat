@@ -120,15 +120,40 @@ class JarvisAIMod(loader.Module):
 
         for attempt in range(2):
             try:
-                await message.edit(text, parse_mode=None)
-                return True
+                edited = await message.edit(text, parse_mode=None)
+
+                if (
+                    self._message_text(message) == text
+                    or self._message_text(edited) == text
+                ):
+                    return True
             except asyncio.CancelledError:
                 raise
             except Exception:
-                if attempt:
-                    break
+                pass
 
+            if attempt == 0:
                 await asyncio.sleep(1)
+
+        client = getattr(message, "client", None) or self._client
+        chat_id = getattr(message, "chat_id", None)
+        message_id = getattr(message, "id", None)
+
+        if client is not None and chat_id is not None and message_id is not None:
+            try:
+                edited = await client.edit_message(
+                    chat_id,
+                    message_id,
+                    text,
+                    parse_mode=None,
+                )
+
+                if edited is not None:
+                    return True
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
 
         return False
 
@@ -156,6 +181,19 @@ class JarvisAIMod(loader.Module):
             await asyncio.sleep(15)
             index = (index + 1) % len(states)
             await self._safe_edit(message, states[index])
+
+    async def _cleanup_later(self, bot, message_ids):
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(
+                self._cleanup_bot_messages(bot, set(message_ids)),
+                timeout=15,
+            )
+
+    def _queue_cleanup(self, bot, message_ids):
+        if message_ids:
+            asyncio.create_task(
+                self._cleanup_later(bot, set(message_ids))
+            )
 
     def _get_int(self, key, default, minimum=1, maximum=None):
         try:
@@ -232,6 +270,13 @@ class JarvisAIMod(loader.Module):
             or getattr(message, "message", "")
             or ""
         ).strip()
+
+    @classmethod
+    def _message_signature(cls, message):
+        return (
+            cls._message_text(message),
+            cls._media_label(message),
+        )
 
     @staticmethod
     def _remember_id(message_ids, message):
@@ -336,6 +381,7 @@ class JarvisAIMod(loader.Module):
         answers = {}
         answer_order = []
         edit_tasks = {}
+        signatures = {}
         response_task = None
         sequence = 0
         last_activity = None
@@ -424,6 +470,8 @@ class JarvisAIMod(loader.Module):
                             sequence += 1
                             key = f"response-{sequence}"
 
+                        signatures[key] = self._message_signature(incoming)
+
                         if not self._is_progress_message(incoming):
                             if key not in answers:
                                 answer_order.append(key)
@@ -446,6 +494,12 @@ class JarvisAIMod(loader.Module):
                         continue
 
                     self._remember_id(cleanup_ids, edited)
+                    signature = self._message_signature(edited)
+
+                    if signature == signatures.get(key):
+                        continue
+
+                    signatures[key] = signature
 
                     if not self._is_progress_message(edited):
                         if key not in answers:
@@ -615,7 +669,7 @@ class JarvisAIMod(loader.Module):
                         if answer_text:
                             answer = answer_text
             finally:
-                await self._cleanup_bot_messages(bot, cleanup_ids)
+                self._queue_cleanup(bot, cleanup_ids)
 
         return answer
 
@@ -886,7 +940,7 @@ class JarvisAIMod(loader.Module):
                             timeout,
                         )
                 finally:
-                    await self._cleanup_bot_messages(bot, cleanup_ids)
+                    self._queue_cleanup(bot, cleanup_ids)
 
             await self._set_message(status, self.strings("ready"))
         except Exception as error:
