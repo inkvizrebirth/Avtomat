@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import io
 import re
 
 from .. import loader, utils
@@ -66,7 +67,7 @@ class JarvisAIMod(loader.Module):
             ),
             loader.ConfigValue(
                 "stream_idle_seconds",
-                10.0,
+                5.0,
                 "Сколько ждать после последнего фрагмента ответа",
             ),
             loader.ConfigValue(
@@ -264,9 +265,27 @@ class JarvisAIMod(loader.Module):
 
     @classmethod
     def _message_signature(cls, message):
+        entities = getattr(message, "entities", None) or []
+        entity_signature = tuple(
+            (
+                type(entity).__name__,
+                getattr(entity, "document_id", None),
+                getattr(entity, "offset", None),
+                getattr(entity, "length", None),
+            )
+            for entity in entities
+        )
+        media = getattr(message, "document", None) or getattr(
+            message,
+            "photo",
+            None,
+        )
+
         return (
             cls._message_text(message),
             cls._media_label(message),
+            getattr(media, "id", None),
+            entity_signature,
         )
 
     @staticmethod
@@ -364,9 +383,9 @@ class JarvisAIMod(loader.Module):
         deadline = loop.time() + timeout
         stream_idle = self._get_float(
             "stream_idle_seconds",
-            10.0,
-            2.0,
-            30.0,
+            5.0,
+            3.0,
+            8.0,
         )
 
         answers = {}
@@ -376,6 +395,7 @@ class JarvisAIMod(loader.Module):
         response_task = None
         sequence = 0
         last_activity = None
+        last_event = loop.time()
 
         def add_edit_listener(message, key):
             remaining = deadline - loop.time()
@@ -383,10 +403,16 @@ class JarvisAIMod(loader.Module):
             if remaining <= 0:
                 return
 
+            edit_timeout = (
+                min(stream_idle, remaining)
+                if key in answers
+                else remaining
+            )
+
             task = asyncio.create_task(
                 conversation.get_edit(
                     message,
-                    timeout=min(stream_idle, remaining),
+                    timeout=edit_timeout,
                 )
             )
             edit_tasks[task] = key
@@ -415,6 +441,13 @@ class JarvisAIMod(loader.Module):
                 ):
                     break
 
+                if (
+                    not require_answer
+                    and last_event is not None
+                    and now - last_event >= stream_idle
+                ):
+                    break
+
                 remaining = deadline - now
 
                 if remaining <= 0:
@@ -436,6 +469,12 @@ class JarvisAIMod(loader.Module):
                         max(0.05, stream_idle - (now - last_activity)),
                     )
 
+                if not require_answer and last_event is not None:
+                    wait_timeout = min(
+                        wait_timeout,
+                        max(0.05, stream_idle - (now - last_event)),
+                    )
+
                 done, _ = await asyncio.wait(
                     tasks,
                     timeout=wait_timeout,
@@ -455,6 +494,7 @@ class JarvisAIMod(loader.Module):
                             continue
 
                         self._remember_id(cleanup_ids, incoming)
+                        last_event = loop.time()
                         key = getattr(incoming, "id", None)
 
                         if key is None:
@@ -480,11 +520,14 @@ class JarvisAIMod(loader.Module):
                         edited = task.result()
                     except asyncio.TimeoutError:
                         continue
+                    except Exception:
+                        continue
 
                     if edited is None:
                         continue
 
                     self._remember_id(cleanup_ids, edited)
+                    last_event = loop.time()
                     signature = self._message_signature(edited)
 
                     if signature == signatures.get(key):
@@ -507,19 +550,7 @@ class JarvisAIMod(loader.Module):
 
                 return None
 
-            ordered = [answers[key] for key in answer_order]
-
-            if len(ordered) == 1:
-                return ordered[0]
-
-            if any(self._media_label(item) for item in ordered):
-                return ordered[-1]
-
-            text = "\n\n".join(
-                self._message_text(item) for item in ordered if item is not None
-            ).strip()
-
-            return text or ordered[-1]
+            return [answers[key] for key in answer_order]
         finally:
             pending = set(edit_tasks)
 
@@ -531,6 +562,99 @@ class JarvisAIMod(loader.Module):
 
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
+
+    async def _download_response_media(self, message):
+        if not self._media_label(message):
+            return None
+
+        try:
+            data = await self._client.download_media(message, bytes)
+        except Exception:
+            return None
+
+        if not data:
+            return None
+
+        if getattr(message, "photo", None):
+            filename = "jarvis.jpg"
+        elif getattr(message, "voice", None):
+            filename = "jarvis.ogg"
+        elif getattr(message, "audio", None):
+            filename = "jarvis.mp3"
+        elif getattr(message, "video", None):
+            filename = "jarvis.mp4"
+        elif getattr(message, "document", None):
+            filename = "jarvis.bin"
+
+            for attribute in getattr(message.document, "attributes", []):
+                document_name = getattr(attribute, "file_name", None)
+
+                if document_name:
+                    filename = document_name
+                    break
+        else:
+            return None
+
+        file_object = io.BytesIO(bytes(data))
+        file_object.name = filename
+
+        return {
+            "file": file_object,
+            "caption": self._message_text(message),
+        }
+
+    async def _pack_response(self, messages):
+        text_parts = []
+        media = []
+
+        for message in messages or []:
+            if self._is_progress_message(message):
+                continue
+
+            text = self._message_text(message)
+
+            if text:
+                text_parts.append(text)
+
+            response_media = await self._download_response_media(message)
+
+            if response_media is not None:
+                media.append(response_media)
+
+        return {
+            "text": "\n\n".join(text_parts).strip(),
+            "media": media,
+        }
+
+    async def _send_response_media(self, message, media):
+        for item in media:
+            file_object = item.get("file")
+            caption = str(item.get("caption") or "").strip()
+
+            if file_object is None:
+                continue
+
+            try:
+                await message.respond(
+                    file=file_object,
+                    caption=caption or None,
+                    parse_mode=None,
+                )
+                continue
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+
+            with contextlib.suppress(Exception):
+                file_object.seek(0)
+                await self._client.send_file(
+                    message.chat_id,
+                    file_object,
+                    caption=caption or None,
+                    parse_mode=None,
+                    reply_to=getattr(message, "id", None),
+                )
 
     async def _has_persona(self, bot):
         async for item in self._client.iter_messages(bot, limit=100):
@@ -648,17 +772,12 @@ class JarvisAIMod(loader.Module):
                         )
 
                     self._remember_id(cleanup_ids, sent)
-                    answer = await self._wait_response(
+                    response_messages = await self._wait_response(
                         conversation,
                         timeout,
                         cleanup_ids,
                     )
-
-                    if not isinstance(answer, str):
-                        answer_text = self._message_text(answer)
-
-                        if answer_text:
-                            answer = answer_text
+                    answer = await self._pack_response(response_messages)
             finally:
                 self._queue_cleanup(bot, cleanup_ids)
 
@@ -801,12 +920,17 @@ class JarvisAIMod(loader.Module):
             heartbeat.cancel()
             await asyncio.gather(heartbeat, return_exceptions=True)
 
-        if isinstance(answer, str):
+        if isinstance(answer, dict):
+            answer_text = str(answer.get("text") or "").strip()
+            answer_media = answer.get("media") or []
+        elif isinstance(answer, str):
             answer_text = answer.strip()
+            answer_media = []
         else:
             answer_text = self._message_text(answer)
+            answer_media = []
 
-        if not answer_text and not getattr(answer, "media", None):
+        if not answer_text and not answer_media:
             await self._set_message(
                 status,
                 self.strings("empty"),
@@ -815,9 +939,11 @@ class JarvisAIMod(loader.Module):
 
         if answer_text:
             await self._set_message(status, answer_text)
-        else:
-            with contextlib.suppress(Exception):
-                await utils.answer(status, answer)
+        elif answer_media:
+            await self._set_message(status, "Джарвис отправил вложение.")
+
+        if answer_media:
+            await self._send_response_media(message, answer_media)
 
     @loader.command()
     async def ask(self, message):
@@ -1009,9 +1135,9 @@ class JarvisAIMod(loader.Module):
                 ),
                 stream_idle=self._get_float(
                     "stream_idle_seconds",
-                    10.0,
-                    2.0,
-                    30.0,
+                    5.0,
+                    3.0,
+                    8.0,
                 ),
                 history=self._get_int("history_limit", 20, 1, 50),
             ),
