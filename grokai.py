@@ -6,24 +6,23 @@ from .. import loader, utils
 
 
 @loader.tds
-class GrokAIMod(loader.Module):
+class JarvisAIMod(loader.Module):
     """AI-помощник через @gemini_gidbot."""
 
-    PERSONA_MARKER = "[JARVIS_GEMINI_PERSONA_V2]"
+    PERSONA_MARKER = "[JARVIS_GEMINI_PERSONA_V3]"
     PERSONA_PROMPT = (
         f"{PERSONA_MARKER}\n"
         "С этого сообщения ты — Джарвис (J.A.R.V.I.S.) из «Мстителей», "
         "личный интеллектуальный помощник пользователя. "
         "Общайся спокойно, умно, вежливо и с лёгкой сухой иронией. "
         "Обращайся к пользователю как «сэр», когда это уместно. "
-        "Оформляй каждый ответ в стиле высокотехнологичного терминала: "
-        "используй короткие ASCII-заголовки и статусы, например "
-        "[J.A.R.V.I.S. // RESPONSE] и STATUS: COMPLETE, затем давай "
-        "понятный ответ по существу. Текст ответа должен быть на русском, "
+        "Общайся естественно, как живой личный помощник, без ролевого "
+        "терминального оформления, системных рамок и служебных статусов. "
+        "Текст ответа должен быть на русском, "
         "если пользователь не попросил другой язык. "
-        "Не используй эмодзи любого вида, premium emoji, стикеры, смайлы "
-        "и декоративные Unicode-символы. Не начинай ответ с эмодзи и не "
-        "отправляй отдельные сообщения, состоящие только из эмодзи. "
+        "Не используй эмодзи любого вида, premium emoji, стикеры, смайлы, "
+        "каомодзи и декоративные Unicode-символы. Не начинай ответ с эмодзи "
+        "и не отправляй отдельные сообщения, состоящие только из эмодзи. "
         "Помогай с вопросами, текстами, кодом, анализом чатов, фото, "
         "документов и аудио, если формат доступен. "
         "Отвечай по существу, не выдумывай факты и предупреждай, "
@@ -34,65 +33,31 @@ class GrokAIMod(loader.Module):
 
     strings = {
         "name": "JarvisAI",
-        "thinking": (
-            "[J.A.R.V.I.S. // PROCESSING]\n"
-            "STATUS: REQUEST RECEIVED\n"
-            "SYSTEMS: ANALYZING"
-        ),
-        "starting": (
-            "[J.A.R.V.I.S. // BOOT SEQUENCE]\n"
-            "STATUS: JARVIS ONLINE\n"
-            "SYSTEMS: INITIALIZING\n"
-            "PERSONA: JARVIS\n"
-            "LINK: ESTABLISHING"
-        ),
-        "timeout": (
-            "[J.A.R.V.I.S. // TIMEOUT]\n"
-            "STATUS: NO RESPONSE\n"
-            "DETAIL: THE AI CORE DID NOT RESPOND IN TIME"
-        ),
-        "empty": (
-            "[J.A.R.V.I.S. // EMPTY RESPONSE]\n"
-            "STATUS: NO CONTENT RECEIVED"
-        ),
-        "error": (
-            "[J.A.R.V.I.S. // SYSTEM FAULT]\n"
-            "STATUS: DEGRADED\n"
-            "DETAIL: {error}"
-        ),
+        "thinking": "Джарвис обрабатывает запрос...",
+        "starting": "Джарвис запущен. Системы инициализируются...",
+        "timeout": "Джарвис пока не получил ответ. Попробуйте повторить запрос.",
+        "empty": "Джарвис получил пустой ответ.",
+        "error": "Джарвис временно недоступен: {error}",
         "usage": (
-            "[J.A.R.V.I.S. // COMMANDS]\n\n"
+            "Команды:\n"
             "{prefix}ask <запрос> — задать вопрос.\n"
             "Можно ответить этой командой на текст, фото, документ, voice или аудио.\n\n"
             "{prefix}askchat [N] <запрос> — передать последние N сообщений чата.\n"
-            "{prefix}grokstart — запустить Джарвиса и установить его личность.\n"
-            "{prefix}grokon — включить ответы на упоминания в чате.\n"
-            "{prefix}grokoff — выключить режим упоминаний.\n"
-            "{prefix}grokstatus — показать состояние модуля."
+            "{prefix}jarvisstart — запустить Джарвиса и установить его личность.\n"
+            "{prefix}jarvison — включить ответы на упоминания в чате.\n"
+            "{prefix}jarvisoff — выключить режим упоминаний.\n"
+            "{prefix}jarvisstatus — показать состояние модуля."
         ),
-        "auto_on": (
-            "[J.A.R.V.I.S. // WATCHER]\n"
-            "STATUS: ENABLED"
-        ),
-        "auto_off": (
-            "[J.A.R.V.I.S. // WATCHER]\n"
-            "STATUS: DISABLED"
-        ),
+        "auto_on": "Режим упоминаний включён в этом чате.",
+        "auto_off": "Режим упоминаний выключен в этом чате.",
         "status": (
-            "[J.A.R.V.I.S. // SYSTEM STATUS]\n"
-            "PERSONA: JARVIS\n"
-            "WATCHER: {state}\n"
-            "TIMEOUT: {timeout} seconds\n"
-            "STREAM IDLE: {stream_idle} seconds\n"
-            "HISTORY BUFFER: {history} messages"
+            "Джарвис\n"
+            "Режим упоминаний: {state}\n"
+            "Таймаут: {timeout} секунд\n"
+            "Ожидание потока: {stream_idle} секунд\n"
+            "История: {history} сообщений"
         ),
-        "ready": (
-            "[J.A.R.V.I.S. // BOOT COMPLETE]\n"
-            "STATUS: JARVIS ONLINE\n"
-            "SYSTEMS: INITIALIZED\n"
-            "PERSONA: JARVIS\n"
-            "STATUS: READY"
-        ),
+        "ready": "Джарвис запущен. Все системы инициализированы.",
     }
 
     def __init__(self):
@@ -121,7 +86,8 @@ class GrokAIMod(loader.Module):
                 "instruction",
                 (
                     "Отвечай по-русски, если пользователь не попросил другой язык. "
-                    "Будь полезным и не выдумывай факты."
+                    "Будь полезным, не выдумывай факты и не используй эмодзи, "
+                    "стикеры или декоративные символы."
                 ),
                 "Инструкция, добавляемая к каждому запросу",
             ),
@@ -136,6 +102,60 @@ class GrokAIMod(loader.Module):
         with contextlib.suppress(Exception):
             me = await self._client.get_me()
             self._username = getattr(me, "username", "") or ""
+
+    async def _work_message(self, message):
+        if getattr(message, "out", False):
+            return message
+
+        return await message.respond(self.strings("thinking"))
+
+    async def _safe_edit(self, message, text):
+        if message is None:
+            return False
+
+        current = self._message_text(message)
+
+        if current == text:
+            return True
+
+        for attempt in range(2):
+            try:
+                await message.edit(text, parse_mode=None)
+                return True
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                if attempt:
+                    break
+
+                await asyncio.sleep(1)
+
+        return False
+
+    async def _set_message(self, message, text):
+        if await self._safe_edit(message, text):
+            return
+
+        try:
+            await utils.answer(message, text)
+            return
+        except Exception:
+            pass
+
+        with contextlib.suppress(Exception):
+            await message.respond(text)
+
+    async def _heartbeat(self, message):
+        states = (
+            "Джарвис обрабатывает запрос...",
+            "Джарвис продолжает работу над запросом...",
+        )
+        index = 0
+
+        while True:
+            await asyncio.sleep(15)
+            index = (index + 1) % len(states)
+            await self._safe_edit(message, states[index])
 
     def _get_int(self, key, default, minimum=1, maximum=None):
         try:
@@ -588,6 +608,12 @@ class GrokAIMod(loader.Module):
                         timeout,
                         cleanup_ids,
                     )
+
+                    if not isinstance(answer, str):
+                        answer_text = self._message_text(answer)
+
+                        if answer_text:
+                            answer = answer_text
             finally:
                 await self._cleanup_bot_messages(bot, cleanup_ids)
 
@@ -702,17 +728,15 @@ class GrokAIMod(loader.Module):
         return "\n".join(rows) or "(читаемых сообщений нет)"
 
     async def _run_request(self, message, prompt, media=None):
-        status = await utils.answer(
-            message,
-            self.strings("thinking"),
-        )
-
+        status = await self._work_message(message)
         status = status or message
+        await self._set_message(status, self.strings("thinking"))
+        heartbeat = asyncio.create_task(self._heartbeat(status))
 
         try:
             answer = await self._ask_bot(prompt, media)
         except asyncio.TimeoutError:
-            await utils.answer(
+            await self._set_message(
                 status,
                 self.strings("timeout"),
             )
@@ -723,11 +747,14 @@ class GrokAIMod(loader.Module):
                 300,
             )
 
-            await utils.answer(
+            await self._set_message(
                 status,
                 self.strings("error").format(error=error_text),
             )
             return
+        finally:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
 
         if isinstance(answer, str):
             answer_text = answer.strip()
@@ -735,13 +762,17 @@ class GrokAIMod(loader.Module):
             answer_text = self._message_text(answer)
 
         if not answer_text and not getattr(answer, "media", None):
-            await utils.answer(
+            await self._set_message(
                 status,
                 self.strings("empty"),
             )
             return
 
-        await utils.answer(status, answer)
+        if answer_text:
+            await self._set_message(status, answer_text)
+        else:
+            with contextlib.suppress(Exception):
+                await utils.answer(status, answer)
 
     @loader.command()
     async def ask(self, message):
@@ -825,15 +856,13 @@ class GrokAIMod(loader.Module):
         await self._run_request(message, prompt)
 
     @loader.command()
-    async def grokstart(self, message):
+    async def jarvisstart(self, message):
         """Запустить Джарвиса и установить его личность в ЛС."""
 
-        status = await utils.answer(
-            message,
-            self.strings("starting"),
-        )
-
+        status = await self._work_message(message)
         status = status or message
+        await self._set_message(status, self.strings("starting"))
+        heartbeat = asyncio.create_task(self._heartbeat(status))
         timeout = min(
             self._get_int("response_timeout", 300, 30, 600),
             60,
@@ -859,14 +888,17 @@ class GrokAIMod(loader.Module):
                 finally:
                     await self._cleanup_bot_messages(bot, cleanup_ids)
 
-            await utils.answer(status, self.strings("ready"))
+            await self._set_message(status, self.strings("ready"))
         except Exception as error:
-            await utils.answer(
+            await self._set_message(
                 status,
                 self.strings("error").format(
                     error=self._clip(str(error), 300),
                 ),
             )
+        finally:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
 
     def _chat_key(self, message):
         chat_id = getattr(message, "chat_id", None)
@@ -885,7 +917,7 @@ class GrokAIMod(loader.Module):
         return {str(chat) for chat in chats}
 
     @loader.command()
-    async def grokon(self, message):
+    async def jarvison(self, message):
         """Включить ответы на упоминания в текущем чате."""
 
         chats = self._auto_chats()
@@ -898,7 +930,7 @@ class GrokAIMod(loader.Module):
         )
 
     @loader.command()
-    async def grokoff(self, message):
+    async def jarvisoff(self, message):
         """Выключить ответы на упоминания в текущем чате."""
 
         chats = self._auto_chats()
@@ -911,7 +943,7 @@ class GrokAIMod(loader.Module):
         )
 
     @loader.command()
-    async def grokstatus(self, message):
+    async def jarvisstatus(self, message):
         """Показать состояние Джарвиса."""
 
         state = (
